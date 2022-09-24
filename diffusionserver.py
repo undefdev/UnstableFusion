@@ -2,7 +2,6 @@ from urllib import request
 import numpy as np
 from PIL import Image
 from diffusers import StableDiffusionPipeline, StableDiffusionInpaintPipeline, StableDiffusionImg2ImgPipeline
-from torch import autocast
 import torch
 from base64 import encodebytes, decodebytes
 
@@ -23,9 +22,7 @@ class StableDiffusionHandler:
     def __init__(self, token=True):
         self.text2img = StableDiffusionPipeline.from_pretrained(
         "CompVis/stable-diffusion-v1-4",
-            revision="fp16",
-            torch_dtype=torch.float16,
-            use_auth_token=token).to("cuda")
+            use_auth_token=token).to("mps")
 
         # self.text2img.safety_checker = dummy_safety_checker
 
@@ -37,7 +34,7 @@ class StableDiffusionHandler:
             scheduler=self.text2img.scheduler,
             safety_checker=self.text2img.safety_checker,
             feature_extractor=self.text2img.feature_extractor
-        ).to("cuda")
+        ).to("mps")
 
         self.img2img = StableDiffusionImg2ImgPipeline(
             unet=self.text2img.unet,
@@ -47,7 +44,7 @@ class StableDiffusionHandler:
             tokenizer=self.text2img.tokenizer,
             safety_checker=self.text2img.safety_checker,
             feature_extractor=self.text2img.feature_extractor
-        ).to("cuda")
+        ).to("mps")
 
         self.inpainter.safety_checker = dummy_safety_checker
         self.img2img.safety_checker = dummy_safety_checker
@@ -57,14 +54,13 @@ class StableDiffusionHandler:
         if seed == -1:
             return None
         else:
-            return torch.Generator("cuda").manual_seed(seed)
+            return torch.Generator("mps").manual_seed(seed)
     
     def inpaint(self, prompt, image, mask, strength=0.75, steps=50, guidance_scale=7.5, seed=-1):
         image_ = Image.fromarray(image.astype(np.uint8)).resize((512, 512), resample=Image.LANCZOS)
         mask_ = Image.fromarray(mask.astype(np.uint8)).resize((512, 512), resample=Image.LANCZOS)
 
-        with autocast("cuda"):
-            im = self.inpainter(
+        im = self.inpainter(
                 prompt=prompt,
                 init_image=image_,
                 mask_image=mask_,
@@ -72,12 +68,11 @@ class StableDiffusionHandler:
                 num_inference_steps=steps,
                 guidance_scale=guidance_scale,
                 generator=self.get_generator(seed)
-            )["sample"][0]
-            return im.resize((image.shape[1], image.shape[0]), resample=Image.LANCZOS)
+        )["sample"][0]
+        return im.resize((image.shape[1], image.shape[0]), resample=Image.LANCZOS)
     
     def generate(self, prompt, width=512, height=512, strength=0.75, steps=50, guidance_scale=7.5,seed=-1):
-        with autocast("cuda"):
-            im = self.text2img(
+        im = self.text2img(
                 prompt=prompt,
                 width=512,
                 height=512,
@@ -85,24 +80,23 @@ class StableDiffusionHandler:
                 num_inference_steps=steps,
                 guidance_scale=guidance_scale,
                 generator=self.get_generator(seed)
-            )["sample"][0]
+        )["sample"][0]
 
-            return im.resize((width, height), resample=Image.LANCZOS)
+        return im.resize((width, height), resample=Image.LANCZOS)
     
     def reimagine(self, prompt, image, steps=50, guidance_scale=7.5, seed=-1):
 
         image_ = Image.fromarray(image.astype(np.uint8)).resize((512, 512), resample=Image.LANCZOS)
-        with autocast("cuda"):
-            results = self.img2img(
+        results = self.img2img(
                 [prompt],
                 init_image=image_,
                 num_inference_steps=steps,
                 guidance_scale=guidance_scale,
                 generator=self.get_generator(seed)
-            )["sample"]
-            print(len(results))
-            im = results[0]
-            return im.resize((image.shape[1], image.shape[0]), resample=Image.LANCZOS)
+        )["sample"]
+        print(len(results))
+        im = results[0]
+        return im.resize((image.shape[1], image.shape[0]), resample=Image.LANCZOS)
 
 def run_app():
     app = Flask(__name__)
